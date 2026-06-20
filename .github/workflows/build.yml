@@ -1,0 +1,82 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04  # 固定版本，避免環境變動
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq \
+          git zip unzip openjdk-17-jdk \
+          autoconf libtool pkg-config \
+          zlib1g-dev libncurses5-dev libncursesw5-dev \
+          cmake libffi-dev libssl-dev \
+          libsdl2-dev libsdl2-image-dev \
+          libsdl2-mixer-dev libsdl2-ttf-dev
+
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip wheel
+        pip install "cython==0.29.36" "buildozer==1.5.0"
+
+    - name: Accept Android SDK licenses
+      run: |
+        mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
+        echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+        echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd" >> ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+        echo -e "\nd975f751698a77b662f1254ddbeed3901e976f5a" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+
+    - name: Cache Buildozer dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.buildozer/android/platform/android-sdk
+          ~/.buildozer/android/platform/android-ndk-r25b
+          ~/.buildozer/android/packages
+        key: buildozer-${{ runner.os }}-v1
+
+    - name: Build APK
+      run: |
+        export BUILDOZER_WARN_ON_ROOT=0
+        buildozer android debug
+      env:
+        JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+
+    - name: Install build-tools manually if missing
+      if: failure()
+      run: |
+        SDKMANAGER=$(find ~/.buildozer -name "sdkmanager" 2>/dev/null | head -1)
+        if [ -n "$SDKMANAGER" ]; then
+          mkdir -p ~/.buildozer/android/platform/android-sdk/licenses
+          echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd" >> ~/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          cd /tmp
+          wget -q "https://dl.google.com/android/repository/build-tools_r34-linux.zip" -O bt.zip
+          mkdir -p ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0
+          unzip -q bt.zip -d /tmp/bt_extract
+          mv /tmp/bt_extract/*/* ~/.buildozer/android/platform/android-sdk/build-tools/34.0.0/ 2>/dev/null || true
+          export BUILDOZER_WARN_ON_ROOT=0
+          buildozer android debug
+        fi
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: FileRenameTool-APK
+        path: bin/*.apk
+        if-no-files-found: error
